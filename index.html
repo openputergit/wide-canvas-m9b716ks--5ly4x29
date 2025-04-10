@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sales Data Visualization Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto p-4">
+        <!-- Loading Spinner -->
+        <div id="loading" class="fixed top-0 left-0 w-full h-full flex items-center justify-center bg-black bg-opacity-50 z-50">
+            <div class="animate-spin rounded-full h-32 w-32 border-t-4 border-b-4 border-blue-500"></div>
+        </div>
+
+        <!-- Dashboard Header -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h1 class="text-3xl font-bold text-gray-800 mb-4">Sales Analytics Dashboard</h1>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-blue-100 p-4 rounded-lg">
+                    <h3 class="text-lg font-semibold text-blue-800">Total Sales</h3>
+                    <p id="totalSales" class="text-2xl font-bold text-blue-600">Loading...</p>
+                </div>
+                <div class="bg-green-100 p-4 rounded-lg">
+                    <h3 class="text-lg font-semibold text-green-800">Average Order Value</h3>
+                    <p id="avgOrder" class="text-2xl font-bold text-green-600">Loading...</p>
+                </div>
+                <div class="bg-purple-100 p-4 rounded-lg">
+                    <h3 class="text-lg font-semibold text-purple-800">Total Orders</h3>
+                    <p id="totalOrders" class="text-2xl font-bold text-purple-600">Loading...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">Sales Trend</h2>
+                <canvas id="salesTrendChart"></canvas>
+            </div>
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">Top Products</h2>
+                <canvas id="topProductsChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Data Table -->
+        <div class="bg-white rounded-lg shadow-lg p-6 mt-6">
+            <h2 class="text-xl font-bold mb-4">Recent Transactions</h2>
+            <div class="overflow-x-auto">
+                <table id="dataTable" class="min-w-full table-auto">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody" class="bg-white divide-y divide-gray-200"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let salesTrendChart = null;
+        let topProductsChart = null;
+
+        async function fetchAndProcessData() {
+            try {
+                const response = await fetch('https://db.zetaverse.one/storage/v1/object/public/app-uploads/spreadsheet-1744279519039/Fglh96TEB7cCwv37V8S2EyZuejg1/5mmk8t5f.xlsx');
+                const csvData = await response.text();
+
+                Papa.parse(csvData, {
+                    header: true,
+                    complete: function(results) {
+                        processData(results.data);
+                        document.getElementById('loading').style.display = 'none';
+                    },
+                    error: function(error) {
+                        console.error('Error parsing CSV:', error);
+                        document.getElementById('loading').style.display = 'none';
+                    }
+                });
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        function processData(data) {
+            // Calculate summary statistics
+            const totalSales = data.reduce((sum, row) => sum + (parseFloat(row.Amount) || 0), 0);
+            const avgOrderValue = totalSales / data.length;
+            
+            // Update summary cards
+            document.getElementById('totalSales').textContent = `$${totalSales.toFixed(2)}`;
+            document.getElementById('avgOrder').textContent = `$${avgOrderValue.toFixed(2)}`;
+            document.getElementById('totalOrders').textContent = data.length;
+
+            // Process data for charts
+            const salesByDate = {};
+            const productSales = {};
+
+            data.forEach(row => {
+                // Sales Trend
+                if (row.Date) {
+                    salesByDate[row.Date] = (salesByDate[row.Date] || 0) + (parseFloat(row.Amount) || 0);
+                }
+
+                // Product Sales
+                if (row.Product) {
+                    productSales[row.Product] = (productSales[row.Product] || 0) + (parseFloat(row.Amount) || 0);
+                }
+            });
+
+            // Create/Update Charts
+            createSalesTrendChart(salesByDate);
+            createTopProductsChart(productSales);
+
+            // Populate table
+            populateTable(data.slice(0, 10)); // Show only last 10 transactions
+        }
+
+        function createSalesTrendChart(salesByDate) {
+            const ctx = document.getElementById('salesTrendChart');
+            if (salesTrendChart) {
+                salesTrendChart.destroy();
+            }
+
+            salesTrendChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: Object.keys(salesByDate),
+                    datasets: [{
+                        label: 'Daily Sales',
+                        data: Object.values(salesByDate),
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                }
+            });
+        }
+
+        function createTopProductsChart(productSales) {
+            const ctx = document.getElementById('topProductsChart');
+            if (topProductsChart) {
+                topProductsChart.destroy();
+            }
+
+            const sortedProducts = Object.entries(productSales)
+                .sort(([,a], [,b]) => b - a)
+                .slice(0, 5);
+
+            topProductsChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: sortedProducts.map(([product]) => product),
+                    datasets: [{
+                        label: 'Product Sales',
+                        data: sortedProducts.map(([,amount]) => amount),
+                        backgroundColor: 'rgb(54, 162, 235)'
+                    }]
+                }
+            });
+        }
+
+        function populateTable(data) {
+            const tableBody = document.getElementById('tableBody');
+            tableBody.innerHTML = '';
+
+            data.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap">${row.Date}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${row.Product}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">${row.Quantity}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">$${parseFloat(row.Amount).toFixed(2)}</td>
+                `;
+                tableBody.appendChild(tr);
+            });
+        }
+
+        // Initial load
+        fetchAndProcessData();
+    </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
